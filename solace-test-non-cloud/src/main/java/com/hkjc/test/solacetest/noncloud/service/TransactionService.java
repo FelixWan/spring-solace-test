@@ -14,15 +14,21 @@ import java.util.function.Supplier;
 import javax.annotation.PostConstruct;
 import javax.jms.ConnectionFactory;
 import javax.jms.Destination;
+import javax.jms.JMSException;
+import javax.jms.Session;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.crossstore.ChangeSetPersister.NotFoundException;
+import org.springframework.integration.StaticMessageHeaderAccessor;
+import org.springframework.integration.acks.AckUtils;
+import org.springframework.integration.acks.AcknowledgmentCallback;
 import org.springframework.integration.support.MessageBuilder;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.jms.connection.CachingConnectionFactory;
 import org.springframework.jms.core.JmsTemplate;
+import org.springframework.jms.core.MessageCreator;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageHeaders;
 import org.springframework.stereotype.Service;
@@ -30,17 +36,15 @@ import org.springframework.stereotype.Service;
 import com.hkjc.test.solacetest.noncloud.domain.Transaction;
 import com.hkjc.test.solacetest.noncloud.dto.TransactionDto;
 import com.hkjc.test.solacetest.noncloud.repository.TransactionRepository;
+import com.solacesystems.jms.message.SolMessage;
+import com.solacesystems.jms.message.SolTextMessage;
 
 @Service
 public class TransactionService {
 	
     @Autowired
-	private JmsTemplate jmsTemplate;
-    @Autowired
-    private ConnectionFactory connectionFactory;
-	private TransactionRepository transRepository;
-	public final Queue<String> pendingQueue = new LinkedList<String>();
-	public final Queue<String> doneQueue = new LinkedList<String>();
+	private JmsTemplate jmsTemplate;	
+    private TransactionRepository transRepository;
 	
     public TransactionService(TransactionRepository transRepository) {
         this.transRepository=transRepository;
@@ -90,32 +94,39 @@ public class TransactionService {
 	
 	public String sendEvent(String messageContent) throws Exception {
 		TransactionDto dto = new TransactionDto();
-		UUID uuid = UUID.randomUUID();
 		dto.setIO("O");
-		dto.setId(uuid.toString().replace("-", ""));
 		dto.setContent(messageContent);
-		dto.setTopic("spring/test/topic/out");
-		dto.setCreatedDateTime(LocalDateTime.now());
-		doneQueue.add(saveMessage(dto));
+		dto.setTopic("spring/test/topic/out2");
+		dto.setCreatedDateTime(LocalDateTime.now());		
 		System.out.println("Message pending: "+dto.getContent());
-		Message<String> message = MessageBuilder.withPayload(dto.getContent()).setHeader("contentType", "application/json").build();
 		jmsTemplate.setPubSubDomain(true);
-		jmsTemplate.convertAndSend("spring/test/topic/out2", messageContent);
+		jmsTemplate.setMessageIdEnabled(true);
+		jmsTemplate.send(dto.getTopic(), new MessageCreator() {
+			@Override
+			public javax.jms.Message createMessage(Session session) throws JMSException {
+				return session.createTextMessage(messageContent);
+			}
+		});
+		dto.setId(UUID.randomUUID().toString().replace("-", ""));
+		this.saveMessage(dto);
 		return dto.getId();
 	}
 	
 	@JmsListener(destination = "spring/test/queue/2")
-	public void handle(Message message) {
-
+	public void handle(SolTextMessage message) throws JMSException {		
 		System.out.println("Message Received: "+message.toString());
 		TransactionDto dto = new TransactionDto();
 		dto.setIO("I");
-		MessageHeaders headers = message.getHeaders(); 
-		dto.setId(headers.get("id").toString().replace("-", ""));
-		dto.setContent(message.getPayload().toString());
-		dto.setTopic(headers.get("jms_destination").toString());
+		String messageId = message.getJMSMessageID();
+		if (messageId == null) {
+			messageId = UUID.randomUUID().toString().replace("-", "");
+		}
+		dto.setId(messageId);
+		dto.setContent(message.getText());
+		dto.setTopic(message.getJMSDestination().toString());
 		dto.setCreatedDateTime(LocalDateTime.now());
 		saveMessage(dto);
+		message.acknowledge();
 	}
     
     private TransactionDto toTransactionDto(Transaction trans){
