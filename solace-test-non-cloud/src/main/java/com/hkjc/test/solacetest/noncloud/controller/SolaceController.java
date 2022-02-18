@@ -1,4 +1,4 @@
-package com.hkjc.test.solacetest.controller;
+package com.hkjc.test.solacetest.noncloud.controller;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -22,15 +22,13 @@ import org.springframework.jms.connection.CachingConnectionFactory;
 import org.springframework.jms.core.JmsTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 
-import com.hkjc.test.solacetest.dto.TransactionDto;
-import com.hkjc.test.solacetest.service.TransactionService;
+import com.hkjc.test.solacetest.noncloud.dto.TransactionDto;
+import com.hkjc.test.solacetest.noncloud.service.TransactionService;
 
 @RestController
 public class SolaceController {
 
 	private final TransactionService transService;
-	@Autowired
-	private JmsTemplate jmsTemplate;
 
     public SolaceController(TransactionService transService) {
         this.transService = transService;
@@ -68,35 +66,9 @@ public class SolaceController {
         return new ResponseEntity(transId, headers,HttpStatus.CREATED);
     }
 	
-	@PostConstruct
-	private void customizeJmsTemplate() {
-		// Update the jmsTemplate's connection factory to cache the connection
-		CachingConnectionFactory ccf = new CachingConnectionFactory();
-		ccf.setTargetConnectionFactory(jmsTemplate.getConnectionFactory());
-		jmsTemplate.setConnectionFactory(ccf);
-
-		// By default Spring Integration uses Queues, but if you set this to true you
-		// will send to a PubSub+ topic destination
-		jmsTemplate.setPubSubDomain(false);
-	}
-	
-	public void sendEvent(String msgContent) throws Exception {
-		System.out.println("==========SENDING MESSAGE========== " + msgContent);
-		jmsTemplate.convertAndSend("spring/test/topic/in", msgContent);
-	}
-	
 	@PostMapping("api/sendSolaceMessage")
 	public ResponseEntity<Void> sendSolaceMessage(@RequestBody String messageContent, UriComponentsBuilder uriComponentsBuilder) throws Exception{
-		transService.pendingQueue.add(messageContent);
-		String transId = null;
-		Integer retry = 0;
-		while (transId == null || retry > 10) {
-			Thread.sleep(100);
-			transId = transService.doneQueue.poll();
-			if (transId == null) {
-				retry++;
-			}
-		}
+		String transId = transService.sendEvent(messageContent);
         return new ResponseEntity(transId, HttpStatus.CREATED);
 	}
 }

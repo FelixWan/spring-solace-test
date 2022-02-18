@@ -1,0 +1,37 @@
+spring:
+  cloud:
+    function:
+      definition: messageConsumer;messageSupplier
+    stream:
+      bindings:
+        messageConsumer-in-0:
+          destination: spring/test/queue/1
+          group: nonexclusive
+          binder: solace-broker
+        messageSupplier-out-0:
+          destination: spring/test/topic/out
+      binders:
+        solace-broker:
+          type: solace
+          environment:
+            solace:
+              java:
+                host: tcp://127.0.0.1:55555
+                msgVpn: default
+                clientUsername: spring_user
+                clientPassword: password
+                connectRetries: 1
+                reconnectRetries: 1
+      solace:
+        bindings:
+          messageConsumer-in-0:
+            consumer: 
+              provisionSubscriptionsToDurableQueue: false
+              provisionDurableQueue: false
+              queueNamePrefix: ""
+              useFamiliarityInQueueName: false
+              useDestinationEncodingInQueueName: false
+              useGroupNameInQueueName: false
+              queueAccessType: 1
+server:
+  port: 8082
