@@ -22,6 +22,8 @@ spring:
                 clientPassword: password
                 connectRetries: 1
                 reconnectRetries: 1
+      poller:
+        fixed-Delay: 100
       solace:
         bindings:
           messageConsumer-in-0:
