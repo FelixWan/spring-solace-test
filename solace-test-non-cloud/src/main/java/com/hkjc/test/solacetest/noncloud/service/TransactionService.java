@@ -3,40 +3,22 @@ package com.hkjc.test.solacetest.noncloud.service;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
-import java.util.Queue;
 import java.util.UUID;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
+import java.util.concurrent.atomic.AtomicReference;
 
-import javax.annotation.PostConstruct;
-import javax.jms.ConnectionFactory;
-import javax.jms.Destination;
 import javax.jms.JMSException;
-import javax.jms.Session;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
 import org.springframework.data.crossstore.ChangeSetPersister.NotFoundException;
-import org.springframework.integration.StaticMessageHeaderAccessor;
-import org.springframework.integration.acks.AckUtils;
-import org.springframework.integration.acks.AcknowledgmentCallback;
-import org.springframework.integration.support.MessageBuilder;
 import org.springframework.jms.annotation.JmsListener;
-import org.springframework.jms.connection.CachingConnectionFactory;
 import org.springframework.jms.core.JmsTemplate;
-import org.springframework.jms.core.MessageCreator;
-import org.springframework.messaging.Message;
-import org.springframework.messaging.MessageHeaders;
 import org.springframework.stereotype.Service;
 
 import com.hkjc.test.solacetest.noncloud.domain.Transaction;
 import com.hkjc.test.solacetest.noncloud.dto.TransactionDto;
 import com.hkjc.test.solacetest.noncloud.repository.TransactionRepository;
-import com.solacesystems.jms.message.SolMessage;
 import com.solacesystems.jms.message.SolTextMessage;
 
 @Service
@@ -100,14 +82,14 @@ public class TransactionService {
 		dto.setCreatedDateTime(LocalDateTime.now());		
 		System.out.println("Message pending: "+dto.getContent());
 		jmsTemplate.setPubSubDomain(true);
-		jmsTemplate.setMessageIdEnabled(true);
-		jmsTemplate.send(dto.getTopic(), new MessageCreator() {
-			@Override
-			public javax.jms.Message createMessage(Session session) throws JMSException {
-				return session.createTextMessage(messageContent);
-			}
-		});
-		dto.setId(UUID.randomUUID().toString().replace("-", ""));
+		final AtomicReference<javax.jms.Message> msg = new AtomicReference<>();
+		jmsTemplate.convertAndSend(dto.getTopic(), 
+				messageContent,
+				postProcessorMsg -> {
+					msg.set(postProcessorMsg);
+					return postProcessorMsg;
+				});
+		dto.setId(msg.get().getJMSMessageID().replace("-", "").replace(":", ""));
 		this.saveMessage(dto);
 		return dto.getId();
 	}
@@ -119,6 +101,7 @@ public class TransactionService {
 		dto.setIO("I");
 		String messageId = message.getJMSMessageID();
 		if (messageId == null) {
+			System.out.println("JMSMessageID is null");
 			messageId = UUID.randomUUID().toString().replace("-", "");
 		}
 		dto.setId(messageId);
