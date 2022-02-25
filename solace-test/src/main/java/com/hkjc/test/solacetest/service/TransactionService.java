@@ -9,18 +9,26 @@ import java.util.Optional;
 import java.util.Queue;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
+import org.springframework.cloud.function.context.PollableBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.crossstore.ChangeSetPersister.NotFoundException;
+import org.springframework.integration.StaticMessageHeaderAccessor;
+import org.springframework.integration.acks.AckUtils;
+import org.springframework.integration.acks.AcknowledgmentCallback;
 import org.springframework.integration.support.MessageBuilder;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageHeaders;
+import org.springframework.messaging.support.GenericMessage;
 import org.springframework.stereotype.Service;
 
 import com.hkjc.test.solacetest.domain.Transaction;
 import com.hkjc.test.solacetest.dto.TransactionDto;
 import com.hkjc.test.solacetest.repository.TransactionRepository;
+
+import reactor.core.publisher.Flux;
 
 @Service
 public class TransactionService {
@@ -76,38 +84,52 @@ public class TransactionService {
     }
     
 	@Bean
-	public Consumer<Message<String>> messageConsumer() {
-		return payload -> {
-			System.out.println("Message Received: "+payload.toString());
-			TransactionDto dto = new TransactionDto();
-			dto.setIO("I");
-			MessageHeaders headers = payload.getHeaders(); 
-			dto.setId(headers.get("id").toString().replace("-", ""));
-			dto.setContent(payload.getPayload());
-			dto.setTopic(headers.get("solace_destination").toString());
-			dto.setCreatedDateTime(LocalDateTime.now());
-			saveMessage(dto);
-		};
+	public Consumer<Flux<Message<String>>> messageConsumer() {
+		return payload -> 
+			payload.subscribe(message -> {
+			    	   	AcknowledgmentCallback acknowledgmentCallback = StaticMessageHeaderAccessor.getAcknowledgmentCallback(message);
+			    	    acknowledgmentCallback.noAutoAck();
+						System.out.println("Message Received: "+message.toString());
+						TransactionDto dto = new TransactionDto();
+						dto.setIO("I");
+						MessageHeaders headers = message.getHeaders(); 
+						dto.setId(headers.get("id").toString().replace("-", ""));
+						dto.setContent(message.getPayload());
+						dto.setTopic(headers.get("solace_destination").toString());
+						dto.setCreatedDateTime(LocalDateTime.now());
+						saveMessage(dto);
+						AckUtils.accept(acknowledgmentCallback);
+					});		
 	}
 	
-	@Bean
-	public Supplier<Message<String>> messageSupplier(){
+	@PollableBean
+	public Supplier<Flux<Message<String>>> messageSupplier(){
 		return () -> {
 			String messageContent = pendingQueue.poll();
 			if (messageContent == null) {
 				return null;
 			}
 			TransactionDto dto = new TransactionDto();
-			UUID uuid = UUID.randomUUID();
 			dto.setIO("O");
-			dto.setId(uuid.toString().replace("-", ""));
 			dto.setContent(messageContent);
 			dto.setTopic("spring/test/topic/out");
 			dto.setCreatedDateTime(LocalDateTime.now());
-			doneQueue.add(saveMessage(dto));
 			System.out.println("Message pending: "+dto.getContent());
 			Message<String> message = MessageBuilder.withPayload(dto.getContent()).setHeader("contentType", "application/json").build();
-			return message;
+			
+			return Flux.just(message)
+					   .doFirst(() -> {
+						 System.out.println("Before send");
+					   })
+					   .doOnComplete(() -> {
+						   System.out.println("Sent complete");
+						   dto.setId(message.getHeaders().get("id").toString().replace("-", ""));
+						   doneQueue.add(dto.getId());
+						   this.saveMessage(dto);
+					   })
+					   .doOnError(Exception.class, e -> {
+						   throw new IllegalStateException("OnError", e);
+					   });
 		};
 	}
     
